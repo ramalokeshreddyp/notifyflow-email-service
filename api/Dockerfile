@@ -20,9 +20,11 @@ COPY api/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy application source code
+# Copy application source code and test suites
 COPY api/ /app/api/
+COPY worker/ /app/worker/
 COPY tests/ /app/tests/
+COPY pytest.ini /app/pytest.ini
 
 # Expose API port
 EXPOSE 8000

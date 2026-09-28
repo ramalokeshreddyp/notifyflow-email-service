@@ -11,7 +11,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-notification_db}
     ports:
-      - "5432:5432"
+      - "${HOST_POSTGRES_PORT:-5436}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
@@ -33,7 +33,7 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "6379:6379"
+      - "${HOST_REDIS_PORT:-6385}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -56,8 +56,8 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
     ports:
-      - "5672:5672"     # AMQP protocol port
-      - "15672:15672"   # Management Web UI
+      - "${HOST_RABBITMQ_PORT:-5672}:5672"     # AMQP protocol port
+      - "${HOST_RABBITMQ_UI_PORT:-15672}:15672" # Management Web UI
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
@@ -79,7 +79,7 @@ services:
     container_name: notifyflow-api
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${HOST_API_PORT:-8005}:8000"
     environment:
       - ENVIRONMENT=production
       - LOG_LEVEL=INFO

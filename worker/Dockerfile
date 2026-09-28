@@ -19,9 +19,11 @@ COPY worker/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy worker application source code
+# Copy worker application source code and test suites
 COPY worker/ /app/worker/
+COPY api/ /app/api/
 COPY tests/ /app/tests/
+COPY pytest.ini /app/pytest.ini
 
 # Health check checking heartbeat file freshness within 30 seconds
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
