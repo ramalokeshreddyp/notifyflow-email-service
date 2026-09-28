@@ -24,7 +24,6 @@ class RabbitMQService:
                 timeout=10,
             )
             self.channel = await self.connection.channel()
-            # Enable publisher confirms
             await self.channel.set_qos(prefetch_count=10)
 
             # Declare Dead Letter Exchange and Dead Letter Queue
@@ -73,12 +72,13 @@ class RabbitMQService:
             logger.info("RabbitMQ connection closed.")
 
     async def health_check(self) -> bool:
-        """Check if RabbitMQ connection and channel are open."""
-        if not self.connection or self.connection.is_closed:
-            return False
-        if not self.channel or self.channel.is_closed:
-            return False
-        return True
+        """Check if RabbitMQ connection and channel are open, reconnecting if needed."""
+        if not self.connection or self.connection.is_closed or not self.channel or self.channel.is_closed:
+            try:
+                await self.connect()
+            except Exception:
+                return False
+        return bool(self.connection and not self.connection.is_closed and self.channel and not self.channel.is_closed)
 
     async def publish_notification(
         self,
@@ -86,8 +86,12 @@ class RabbitMQService:
         routing_key: str = settings.RABBITMQ_ROUTING_KEY,
     ) -> bool:
         """
-        Publish a persistent notification event to RabbitMQ.
+        Publish a persistent notification event to RabbitMQ with automatic reconnect.
         """
+        if not self.exchange or (self.connection and self.connection.is_closed) or not self.channel or self.channel.is_closed:
+            logger.info("RabbitMQ exchange not ready. Attempting reconnect...")
+            await self.connect()
+
         if not self.exchange or (self.connection and self.connection.is_closed):
             logger.error("Cannot publish notification: RabbitMQ exchange is not available.")
             raise RuntimeError("RabbitMQ broker service is currently unavailable.")
