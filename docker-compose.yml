@@ -1,0 +1,160 @@
+services:
+  # =========================================================================
+  # PostgreSQL Database Service
+  # =========================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: notifyflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-notification_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d notification_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - notifyflow-network
+
+  # =========================================================================
+  # Redis In-Memory Cache & Rate Limiting Service
+  # =========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: notifyflow-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - notifyflow-network
+
+  # =========================================================================
+  # RabbitMQ Message Broker Service
+  # =========================================================================
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: notifyflow-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "5672:5672"     # AMQP protocol port
+      - "15672:15672"   # Management Web UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    networks:
+      - notifyflow-network
+
+  # =========================================================================
+  # API Service (Producer & Validation Engine)
+  # =========================================================================
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    container_name: notifyflow-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      - API_PORT=8000
+      - API_HOST=0.0.0.0
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/notification_db
+      - REDIS_URL=redis://redis:6379/0
+      - CACHE_TTL_SECONDS=3600
+      - RATE_LIMIT_PER_MINUTE=60
+      - RATE_LIMIT_WINDOW_SECONDS=60
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - RABBITMQ_QUEUE=email_notifications
+      - RABBITMQ_EXCHANGE=notifications_exchange
+      - RABBITMQ_ROUTING_KEY=notification.email
+      - RABBITMQ_DEAD_LETTER_QUEUE=email_notifications_dlq
+      - RABBITMQ_DEAD_LETTER_EXCHANGE=notifications_dlx
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - notifyflow-network
+
+  # =========================================================================
+  # Worker Service (Consumer, Templating & Simulated Email Dispatcher)
+  # =========================================================================
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    container_name: notifyflow-worker
+    restart: unless-stopped
+    environment:
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/notification_db
+      - REDIS_URL=redis://redis:6379/0
+      - CACHE_TTL_SECONDS=3600
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - RABBITMQ_QUEUE=email_notifications
+      - RABBITMQ_EXCHANGE=notifications_exchange
+      - RABBITMQ_ROUTING_KEY=notification.email
+      - RABBITMQ_DEAD_LETTER_QUEUE=email_notifications_dlq
+      - RABBITMQ_DEAD_LETTER_EXCHANGE=notifications_dlx
+      - CONSUMER_PREFETCH_COUNT=10
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, time; ts = os.path.getmtime('/tmp/worker_heartbeat') if os.path.exists('/tmp/worker_heartbeat') else 0; exit(0 if (time.time() - ts) < 30 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - notifyflow-network
+
+networks:
+  notifyflow-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
